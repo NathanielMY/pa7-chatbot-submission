@@ -163,7 +163,24 @@ class Chatbot:
         pre-processed with preprocess()
         :returns: list of movie titles that are potentially in the text
         """
-        return []
+        titles = []
+        # Look for text between quotation marks
+        in_quotes = False
+        current_title = ""
+        
+        for char in preprocessed_input:
+            if char == '"':
+                if in_quotes:
+                    # End of a title
+                    if current_title:  # Only add non-empty titles
+                        titles.append(current_title)
+                    current_title = ""
+                in_quotes = not in_quotes
+            elif in_quotes:
+                # Add character to current title
+                current_title += char
+                
+        return titles
 
     def find_movies_by_title(self, title):
         """ Given a movie title, return a list of indices of matching movies.
@@ -185,6 +202,7 @@ class Chatbot:
         """
         return []
 
+
     def extract_sentiment(self, preprocessed_input):
         """Extract a sentiment rating from a line of pre-processed text.
 
@@ -201,7 +219,53 @@ class Chatbot:
         pre-processed with preprocess()
         :returns: a numerical value for the sentiment of the text
         """
-        return 0
+        # Remove movie titles from input to avoid counting them in sentiment analysis
+        titles = self.extract_titles(preprocessed_input)
+        for title in titles:
+            preprocessed_input = preprocessed_input.replace(f'"{title}"', '')
+        
+        # Convert input to lowercase and split into words
+        words = preprocessed_input.lower().split()
+        
+        # Create bag of words (word -> count)
+        bag_of_words = {}
+        for word in words:
+            # Remove punctuation from word
+            word = ''.join(c for c in word if c.isalpha())
+            if word:  # Skip empty strings
+                bag_of_words[word] = bag_of_words.get(word, 0) + 1
+        
+        net_word_sentiment = 0
+        for word, count in bag_of_words.items():
+            net_word_sentiment += count * self.calc_work_sentiment(word)
+        
+        return (net_word_sentiment > 0) - (net_word_sentiment < 0)
+
+    
+    def calc_work_sentiment(self, word):
+       #returns 1 if positive, -1 if negative, 0 if neutral
+       with open('data/sentiment.txt', 'r') as f:
+           sentiment_lines = f.readlines()
+       
+       # Process each line to create a dictionary of word sentiments
+       for line in sentiment_lines:
+           # Remove whitespace and split by comma
+           parts = line.strip().split(',')
+           if len(parts) == 2:
+               sentiment_word, sentiment_value = parts
+               # Check if this is the word we're looking for
+               if sentiment_word == word:
+                   # Return sentiment value based on pos/neg
+                   if sentiment_value == 'pos':
+                       return 1
+                   elif sentiment_value == 'neg':
+                       return -1
+                   else:
+                       return 0
+       
+       # If word not found in sentiment dictionary, return neutral sentiment
+       return 0
+
 
     ############################################################################
     # 3. Movie Recommendation helper functions                                 #
