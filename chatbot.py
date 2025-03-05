@@ -183,7 +183,42 @@ class Chatbot:
         :param title: a string containing a movie title
         :returns: a list of indices of matching movies
         """
-        return []
+        
+    def find_movies_by_title(self, title):
+        file_path = "pa7-chatbot-main/data/movies.txt"  # Adjust if needed
+        matching_indices = []
+
+        # Check if the title contains a year at the end
+        if "(" in title and ")" in title and title.strip()[-1] == ")":
+            parts = title.rsplit(" (", 1)
+            search_title = parts[0].strip()
+            search_year = parts[1][:-1]  # Remove closing ')'
+        else:
+            search_title = title.strip()
+            search_year = None
+
+        with open(file_path, "r", encoding="utf-8") as file:
+            for line in file:
+                parts = line.strip().split('%')
+                if len(parts) < 2:
+                    continue  # Skip malformed lines
+                
+                index, movie_entry = parts[0], parts[1]
+
+                # Extract title and year manually
+                if "(" in movie_entry and ")" in movie_entry and movie_entry.strip()[-1] == ")":
+                    movie_parts = movie_entry.rsplit(" (", 1)
+                    movie_title = movie_parts[0].strip()
+                    movie_year = movie_parts[1][:-1]  # Remove closing ')'
+                else:
+                    movie_title = movie_entry.strip()
+                    movie_year = None
+
+                # Match based on title and year (if provided)
+                if search_title.lower() == movie_title.lower() and (search_year is None or search_year == movie_year):
+                    matching_indices.append(int(index))
+
+        return matching_indices
 
     def extract_sentiment(self, preprocessed_input):
         """Extract a sentiment rating from a line of pre-processed text.
@@ -234,8 +269,8 @@ class Chatbot:
 
         # The starter code returns a new matrix shaped like ratings but full of
         # zeros.
-        binarized_ratings = np.zeros_like(ratings)
-
+        binarized_ratings = np.where(ratings > threshold, 1, -1)
+        binarized_ratings[ratings == 0] = 0
         ########################################################################
         #                        END OF YOUR CODE                              #
         ########################################################################
@@ -297,6 +332,7 @@ class Chatbot:
         ########################################################################
 
         # Populate this list with k movie indices to recommend to the user.
+
         recommendations = []
 
         ########################################################################
