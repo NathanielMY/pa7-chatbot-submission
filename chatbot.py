@@ -35,7 +35,7 @@ class Chatbot:
 
         # Binarize the movie ratings before storing the binarized matrix.
         self.ratings = self.binarize(ratings)
-        self.users_ratings = []
+        self.users_ratings = [0 for _ in range(len(self.ratings))]
         self.recommendations = []
         self.recommendation_idx = 0
         ########################################################################
@@ -110,9 +110,16 @@ class Chatbot:
             response = "I processed {} in LLM Programming mode!!".format(line)
         else:
             #if user just sends yes, recommend another movie
-            if line == "yes" and self.recommendation_idx > 0:
+            yes_words = ["yes", "y", "yeah", "yup", "yep", "sure", "ok", "okay", "alright", "alrighty", "alrighty-then", "certainly", "definitely", "absolutely", "for sure", "for real"]
+            no_words = ["no", "n", "nah", "nope", "not", "no way", "no thanks", "no thanks", "no way", "no way jose", "no way josé", "no way jose", "no way josé", "no way jose", "no way josé", "no way jose", "no way josé"]
+            # Strip line from punctuation and check if the cleaned text is in yes_words
+            cleaned_line = line.lower().strip('!?.;:')
+            if cleaned_line in yes_words and self.recommendation_idx > 0:
                 self.recommendation_idx += 1
-                response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(self.recommendations[self.recommendation_idx])
+                response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(self.titles[self.recommendations[self.recommendation_idx]][0])
+                return response
+            if cleaned_line in no_words and self.recommendation_idx > 0:
+                return "ok I won't recommend another movie. Let me know if you have any other movie recommendations."
             
             # Process the input to extract movie titles
             preprocessed_input = self.preprocess(line)
@@ -122,63 +129,81 @@ class Chatbot:
             for title in movie_titles:
                 movie_indices.extend(self.find_movies_by_title(title))
 
-
-            if np.count_nonzero(self.users_ratings) > 5:
-                #give recommendation
-                if self.recommendation_idx == 0:
-                    self.recommendations = self.recommend(self.users_ratings, self.ratings)
-                    #this is just an index, now need to get the title
-                    movie_titles = [self.titles[i] for i in self.recommendations]
-                    response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(movie_titles[self.recommendation_idx])
-                    self.recommendation_idx += 1
+            # Concatenate multiple movie titles into a single string
+            if len(movie_titles) > 1:
+                if len(movie_titles) == 2:
+                    # For two movies, use "and" to join them
+                    concatenated_titles = f'"{movie_titles[0]}" and "{movie_titles[1]}"'
                 else:
-                    response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(movie_titles[self.recommendation_idx])
+                    # For more than two movies, use commas and "and" for the last one
+                    titles_with_quotes = [f'"{title}"' for title in movie_titles]
+                    last_title = titles_with_quotes.pop()
+                    concatenated_titles = ", ".join(titles_with_quotes) + ", and " + last_title
 
+                # Replace individual titles with the concatenated version in later code
+                # Store the original titles for processing individual sentiments
+                original_titles = movie_titles.copy()
+                movie_titles = [concatenated_titles]
+
+            
+            
+            if not movie_indices:
+                responses = [
+                    "I couldn't find any movie titles in your input. Can you tell me about a movie you've watched?",
+                    "Hmm, I didn't catch any movie titles there. Would you mind sharing your thoughts on a specific film?",
+                    "I'm looking for movie titles in what you said, but couldn't find any. Could you mention a movie you've seen recently?"
+                ]
+                response = responses[len(preprocessed_input) % 3]
             else:
-                if not movie_titles:
+                # Extract sentiment for the movie
+                sentiment = self.extract_sentiment(preprocessed_input)
+                
+                if sentiment > 0:
                     responses = [
-                        "I couldn't find any movie titles in your input. Can you tell me about a movie you've watched?",
-                        "Hmm, I didn't catch any movie titles there. Would you mind sharing your thoughts on a specific film?",
-                        "I'm looking for movie titles in what you said, but couldn't find any. Could you mention a movie you've seen recently?"
+                        "You liked \"{}\". Thank you for sharing! Would you like to tell me about another movie?".format(movie_titles[0]),
+                        "I see that you enjoyed \"{}\". That's great to hear! What other movies have you watched?".format(movie_titles[0]),
+                        "Ah, so you're a fan of \"{}\". I'll remember that. Any other films you'd like to discuss?".format(movie_titles[0])
                     ]
                     response = responses[len(preprocessed_input) % 3]
+
+                    for index in movie_indices:
+                        self.users_ratings[index] = 1
+
+                
+                elif sentiment < 0:
+                    responses = [
+                        "You didn't like \"{}\". I'll make a note of that. Tell me about another movie you've watched.".format(movie_titles[0]),
+                        "I understand that \"{}\" wasn't your cup of tea. What's another movie you've seen?".format(movie_titles[0]),
+                        "Sorry to hear you didn't enjoy \"{}\". Perhaps you could share your thoughts on a different film?".format(movie_titles[0])
+                    ]
+                    response = responses[len(preprocessed_input) % 3]
+
+                    for index in movie_indices:
+                        self.users_ratings[index] = -1
                 else:
-                    # Extract sentiment for the movie
-                    sentiment = self.extract_sentiment(preprocessed_input)
-                    
-                    if sentiment > 0:
-                        responses = [
-                            "You liked \"{}\". Thank you for sharing! Would you like to tell me about another movie?".format(movie_titles[0]),
-                            "I see that you enjoyed \"{}\". That's great to hear! What other movies have you watched?".format(movie_titles[0]),
-                            "Ah, so you're a fan of \"{}\". I'll remember that. Any other films you'd like to discuss?".format(movie_titles[0])
-                        ]
-                        response = responses[len(preprocessed_input) % 3]
+                    responses = [
+                        "I'm not sure if you liked \"{}\". Can you tell me more about it?".format(movie_titles[0]),
+                        "Your feelings about \"{}\" aren't clear to me. Could you elaborate on what you thought of it?".format(movie_titles[0]),
+                        "I'm having trouble determining your opinion of \"{}\". Would you mind clarifying whether you enjoyed it?".format(movie_titles[0])
+                    ]
+                    response = responses[len(preprocessed_input) % 3]
 
-                        for index in movie_indices:
-                            self.users_ratings[index] = 1
+                if np.count_nonzero(self.users_ratings) >= 5:
+                        #give recommendation
+                        if self.recommendation_idx == 0:
+                            self.recommendations = self.recommend(self.users_ratings, self.ratings)
+                            #this is just an index, now need to get the title
+                            recommended_movie_titles = [self.titles[i] for i in self.recommendations]
+                            response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(recommended_movie_titles[self.recommendation_idx][0])
+                            self.recommendation_idx += 1
+                        else:
+                            response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(recommended_movie_titles[self.recommendation_idx][0])
 
-                    
-                    elif sentiment < 0:
-                        responses = [
-                            "You didn't like \"{}\". I'll make a note of that. Tell me about another movie you've watched.".format(movie_titles[0]),
-                            "I understand that \"{}\" wasn't your cup of tea. What's another movie you've seen?".format(movie_titles[0]),
-                            "Sorry to hear you didn't enjoy \"{}\". Perhaps you could share your thoughts on a different film?".format(movie_titles[0])
-                        ]
-                        response = responses[len(preprocessed_input) % 3]
-
-                        for index in movie_indices:
-                            self.users_ratings[index] = -1
-                    else:
-                        responses = [
-                            "I'm not sure if you liked \"{}\". Can you tell me more about it?".format(movie_titles[0]),
-                            "Your feelings about \"{}\" aren't clear to me. Could you elaborate on what you thought of it?".format(movie_titles[0]),
-                            "I'm having trouble determining your opinion of \"{}\". Would you mind clarifying whether you enjoyed it?".format(movie_titles[0])
-                        ]
-                        response = responses[len(preprocessed_input) % 3]
 
         ########################################################################
         #                          END OF YOUR CODE                            #
         ########################################################################
+        
         return response
 
     @staticmethod
