@@ -18,7 +18,7 @@ class Chatbot:
     def __init__(self, llm_enabled=False):
         # The chatbot's default name is `moviebot`.
         # TODO: Give your chatbot a new name.
-        self.name = 'moviebot'
+        self.name = 'moviezmahn'
 
         self.llm_enabled = llm_enabled
 
@@ -33,7 +33,10 @@ class Chatbot:
         ########################################################################
 
         # Binarize the movie ratings before storing the binarized matrix.
-        self.ratings = ratings
+        self.ratings = self.binarize(ratings)
+        self.users_ratings = []
+        self.recommendations = []
+        self.recommendation_idx = 0
         ########################################################################
         #                             END OF YOUR CODE                         #
         ########################################################################
@@ -48,7 +51,7 @@ class Chatbot:
         # TODO: Write a short greeting message                                 #
         ########################################################################
 
-        greeting_message = "How can I help you?"
+        greeting_message = "ello boss, you want help today?"
 
         ########################################################################
         #                             END OF YOUR CODE                         #
@@ -63,7 +66,7 @@ class Chatbot:
         # TODO: Write a short farewell message                                 #
         ########################################################################
 
-        goodbye_message = "Have a nice day!"
+        goodbye_message = "farewell boss, see u next time!"
 
         ########################################################################
         #                          END OF YOUR CODE                            #
@@ -101,10 +104,69 @@ class Chatbot:
         # directly based on how modular it is, we highly recommended writing   #
         # code in a modular fashion to make it easier to improve and debug.    #
         ########################################################################
+
         if self.llm_enabled:
             response = "I processed {} in LLM Programming mode!!".format(line)
         else:
-            response = "I processed {} in Starter (GUS) mode!!".format(line)
+            #if user just sends yes, recommend another movie
+            if line == "yes" and self.recommendation_idx > 0:
+                self.recommendation_idx += 1
+                response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(self.recommendations[self.recommendation_idx])
+            
+            # Process the input to extract movie titles
+            preprocessed_input = self.preprocess(line)
+            titles = self.extract_titles(preprocessed_input)
+
+            if np.count_nonzero(titles) > 5:
+                #give recommendation
+                if self.recommendation_idx == 0:
+                    self.recommendations = self.recommend(self.users_ratings, self.ratings)
+                    response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(self.recommendations[self.recommendation_idx])
+                    self.recommendation_idx += 1
+                else:
+                    response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(self.recommendations[self.recommendation_idx])
+
+            else:
+                if not titles:
+                    responses = [
+                        "I couldn't find any movie titles in your input. Can you tell me about a movie you've watched?",
+                        "Hmm, I didn't catch any movie titles there. Would you mind sharing your thoughts on a specific film?",
+                        "I'm looking for movie titles in what you said, but couldn't find any. Could you mention a movie you've seen recently?"
+                    ]
+                    response = responses[len(preprocessed_input) % 3]
+                else:
+                    # Extract sentiment for the movie
+                    sentiment = self.extract_sentiment(preprocessed_input)
+                    
+                    if sentiment > 0:
+                        responses = [
+                            "You liked \"{}\". Thank you for sharing! Would you like to tell me about another movie?".format(titles[0]),
+                            "I see that you enjoyed \"{}\". That's great to hear! What other movies have you watched?".format(titles[0]),
+                            "Ah, so you're a fan of \"{}\". I'll remember that. Any other films you'd like to discuss?".format(titles[0])
+                        ]
+                        response = responses[len(preprocessed_input) % 3]
+
+                        for title in titles:
+                            self.users_ratings[title] = 1
+
+                    
+                    elif sentiment < 0:
+                        responses = [
+                            "You didn't like \"{}\". I'll make a note of that. Tell me about another movie you've watched.".format(titles[0]),
+                            "I understand that \"{}\" wasn't your cup of tea. What's another movie you've seen?".format(titles[0]),
+                            "Sorry to hear you didn't enjoy \"{}\". Perhaps you could share your thoughts on a different film?".format(titles[0])
+                        ]
+                        response = responses[len(preprocessed_input) % 3]
+
+                        for title in titles:
+                            self.users_ratings[title] = -1
+                    else:
+                        responses = [
+                            "I'm not sure if you liked \"{}\". Can you tell me more about it?".format(titles[0]),
+                            "Your feelings about \"{}\" aren't clear to me. Could you elaborate on what you thought of it?".format(titles[0]),
+                            "I'm having trouble determining your opinion of \"{}\". Would you mind clarifying whether you enjoyed it?".format(titles[0])
+                        ]
+                        response = responses[len(preprocessed_input) % 3]
 
         ########################################################################
         #                          END OF YOUR CODE                            #
@@ -202,7 +264,7 @@ class Chatbot:
         """
         
     def find_movies_by_title(self, title):
-        file_path = "pa7-chatbot-main/data/movies.txt"  # Adjust if needed
+        file_path = "./data/movies.txt"  # Adjust if needed
         matching_indices = []
 
         # Check if the title contains a year at the end
@@ -272,14 +334,14 @@ class Chatbot:
         
         net_word_sentiment = 0
         for word, count in bag_of_words.items():
-            net_word_sentiment += count * self.calc_work_sentiment(word)
+            net_word_sentiment += count * self.calc_word_sentiment(word)
         
         return (net_word_sentiment > 0) - (net_word_sentiment < 0)
 
     
-    def calc_work_sentiment(self, word):
+    def calc_word_sentiment(self, word):
        #returns 1 if positive, -1 if negative, 0 if neutral
-       with open('data/sentiment.txt', 'r') as f:
+       with open('./data/sentiment.txt', 'r') as f:
            sentiment_lines = f.readlines()
        
        # Process each line to create a dictionary of word sentiments
@@ -354,6 +416,15 @@ class Chatbot:
         # TODO: Compute cosine similarity between the two vectors.             #
         ########################################################################
         similarity = 0
+
+        u_norm = np.linalg.norm(u)
+        v_norm = np.linalg.norm(v)
+        
+        if u_norm == 0 or v_norm == 0:
+            return 0
+        
+        # Calculate dot product and divide by the product of magnitudes
+        similarity = np.dot(u, v) / (u_norm * v_norm)
         ########################################################################
         #                          END OF YOUR CODE                            #
         ########################################################################
@@ -398,6 +469,30 @@ class Chatbot:
         # Populate this list with k movie indices to recommend to the user.
 
         recommendations = []
+        #create a nxn matrix of similarity scores of movies with ach other
+        temp_matrix = np.zeros((ratings_matrix.shape[0], ratings_matrix.shape[0]))
+
+        for i in range(ratings_matrix.shape[0]):
+            for j in range(ratings_matrix.shape[0]):
+                temp_matrix[i][j] = self.similarity(ratings_matrix[i], ratings_matrix[j])
+
+        #binarize user ratinfs
+        bin_user_ratings = self.binarize(user_ratings)
+
+        movie_idx_to_ratr = {}
+
+        
+        for j in range(ratings_matrix.shape[0]):
+            aggr = 0
+            for i in range(len(bin_user_ratings)):
+                if bin_user_ratings[i] != 0:
+                    sim_score = temp_matrix[j][i]
+                    aggr += sim_score * bin_user_ratings[i]
+            movie_idx_to_ratr[j] = aggr
+        
+        #return top k keys with highest values
+        recommendations = sorted(movie_idx_to_ratr, key=movie_idx_to_ratr.get, reverse=True)[:k]
+                
 
         ########################################################################
         #                        END OF YOUR CODE                              #
