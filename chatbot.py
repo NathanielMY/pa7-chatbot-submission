@@ -7,6 +7,7 @@
 ######################################################################
 import util
 from pydantic import BaseModel, Field
+from porter_stemmer import PorterStemmer
 
 import numpy as np
 
@@ -115,19 +116,26 @@ class Chatbot:
             
             # Process the input to extract movie titles
             preprocessed_input = self.preprocess(line)
-            titles = self.extract_titles(preprocessed_input)
+            movie_titles = self.extract_titles(preprocessed_input)
+            #call get movie titles on each index
+            movie_indices = []
+            for title in movie_titles:
+                movie_indices.extend(self.find_movies_by_title(title))
 
-            if np.count_nonzero(titles) > 5:
+
+            if np.count_nonzero(self.users_ratings) > 5:
                 #give recommendation
                 if self.recommendation_idx == 0:
                     self.recommendations = self.recommend(self.users_ratings, self.ratings)
-                    response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(self.recommendations[self.recommendation_idx])
+                    #this is just an index, now need to get the title
+                    movie_titles = [self.titles[i] for i in self.recommendations]
+                    response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(movie_titles[self.recommendation_idx])
                     self.recommendation_idx += 1
                 else:
-                    response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(self.recommendations[self.recommendation_idx])
+                    response = "Based on your ratings, I recommend you watch the following movie: {}. Do you want me to recommend another movie?".format(movie_titles[self.recommendation_idx])
 
             else:
-                if not titles:
+                if not movie_titles:
                     responses = [
                         "I couldn't find any movie titles in your input. Can you tell me about a movie you've watched?",
                         "Hmm, I didn't catch any movie titles there. Would you mind sharing your thoughts on a specific film?",
@@ -140,31 +148,31 @@ class Chatbot:
                     
                     if sentiment > 0:
                         responses = [
-                            "You liked \"{}\". Thank you for sharing! Would you like to tell me about another movie?".format(titles[0]),
-                            "I see that you enjoyed \"{}\". That's great to hear! What other movies have you watched?".format(titles[0]),
-                            "Ah, so you're a fan of \"{}\". I'll remember that. Any other films you'd like to discuss?".format(titles[0])
+                            "You liked \"{}\". Thank you for sharing! Would you like to tell me about another movie?".format(movie_titles[0]),
+                            "I see that you enjoyed \"{}\". That's great to hear! What other movies have you watched?".format(movie_titles[0]),
+                            "Ah, so you're a fan of \"{}\". I'll remember that. Any other films you'd like to discuss?".format(movie_titles[0])
                         ]
                         response = responses[len(preprocessed_input) % 3]
 
-                        for title in titles:
-                            self.users_ratings[title] = 1
+                        for index in movie_indices:
+                            self.users_ratings[index] = 1
 
                     
                     elif sentiment < 0:
                         responses = [
-                            "You didn't like \"{}\". I'll make a note of that. Tell me about another movie you've watched.".format(titles[0]),
-                            "I understand that \"{}\" wasn't your cup of tea. What's another movie you've seen?".format(titles[0]),
-                            "Sorry to hear you didn't enjoy \"{}\". Perhaps you could share your thoughts on a different film?".format(titles[0])
+                            "You didn't like \"{}\". I'll make a note of that. Tell me about another movie you've watched.".format(movie_titles[0]),
+                            "I understand that \"{}\" wasn't your cup of tea. What's another movie you've seen?".format(movie_titles[0]),
+                            "Sorry to hear you didn't enjoy \"{}\". Perhaps you could share your thoughts on a different film?".format(movie_titles[0])
                         ]
                         response = responses[len(preprocessed_input) % 3]
 
-                        for title in titles:
-                            self.users_ratings[title] = -1
+                        for index in movie_indices:
+                            self.users_ratings[index] = -1
                     else:
                         responses = [
-                            "I'm not sure if you liked \"{}\". Can you tell me more about it?".format(titles[0]),
-                            "Your feelings about \"{}\" aren't clear to me. Could you elaborate on what you thought of it?".format(titles[0]),
-                            "I'm having trouble determining your opinion of \"{}\". Would you mind clarifying whether you enjoyed it?".format(titles[0])
+                            "I'm not sure if you liked \"{}\". Can you tell me more about it?".format(movie_titles[0]),
+                            "Your feelings about \"{}\" aren't clear to me. Could you elaborate on what you thought of it?".format(movie_titles[0]),
+                            "I'm having trouble determining your opinion of \"{}\". Would you mind clarifying whether you enjoyed it?".format(movie_titles[0])
                         ]
                         response = responses[len(preprocessed_input) % 3]
 
@@ -197,6 +205,7 @@ class Chatbot:
         # leave this method unmodified.                                        #
         ########################################################################
 
+        
         ########################################################################
         #                             END OF YOUR CODE                         #
         ########################################################################
@@ -244,6 +253,17 @@ class Chatbot:
                 
         return titles
 
+    def normalize_title(self,title):
+        title = title.replace(",", "").replace(".", "").replace("'", "").replace(":", "").replace(";", "").replace("-", "")
+
+        words = title.lower().split()
+
+ 
+        if words and words[0] in {"the", "a", "an"}:
+            words.append(words.pop(0))  
+
+        return set(words)
+
     def find_movies_by_title(self, title):
         """ Given a movie title, return a list of indices of matching movies.
 
@@ -263,40 +283,32 @@ class Chatbot:
         :returns: a list of indices of matching movies
         """
         
-    def find_movies_by_title(self, title):
-        file_path = "./data/movies.txt"  # Adjust if needed
+        movie_file = "./data/movies.txt"
         matching_indices = []
+        search_words = self.normalize_title(title)
 
-        # Check if the title contains a year at the end
-        if "(" in title and ")" in title and title.strip()[-1] == ")":
-            parts = title.rsplit(" (", 1)
-            search_title = parts[0].strip()
-            search_year = parts[1][:-1]  # Remove closing ')'
-        else:
-            search_title = title.strip()
-            search_year = None
-
-        with open(file_path, "r", encoding="utf-8") as file:
-            for line in file:
+        has_year = False
+        for word in search_words:
+            if word.startswith('(') and word.endswith(')') and all(char.isdigit() for char in word[1:-1]):
+                has_year = True
+                break
+        
+        with open(movie_file, "r", encoding="utf-8") as f:
+            for line in f:
                 parts = line.strip().split('%')
-                if len(parts) < 2:
-                    continue  # Skip malformed lines
+
+                index, movie_entry = parts[0].strip(), parts[1].strip()
+                movie_words = self.normalize_title(movie_entry)
+     
+                if not has_year:
+                    #remove the year from the movie_words
+                    movie_words = [word for word in movie_words if not (word.startswith('(') and word.endswith(')') and all(char.isdigit() for char in word[1:-1]))]
+                    movie_words = set(movie_words)
+                    #print(movie_words)
                 
-                index, movie_entry = parts[0], parts[1]
-
-                # Extract title and year manually
-                if "(" in movie_entry and ")" in movie_entry and movie_entry.strip()[-1] == ")":
-                    movie_parts = movie_entry.rsplit(" (", 1)
-                    movie_title = movie_parts[0].strip()
-                    movie_year = movie_parts[1][:-1]  # Remove closing ')'
-                else:
-                    movie_title = movie_entry.strip()
-                    movie_year = None
-
-                # Match based on title and year (if provided)
-                if search_title.lower() == movie_title.lower() and (search_year is None or search_year == movie_year):
+                if search_words.issubset(movie_words) and movie_words.issubset(search_words):
                     matching_indices.append(int(index))
-
+        
         return matching_indices
 
 
@@ -323,45 +335,88 @@ class Chatbot:
         
         # Convert input to lowercase and split into words
         words = preprocessed_input.lower().split()
+
+        stemmer = PorterStemmer()
+
+        # Track negation words
+        negation_words = {"no", "not", "never", "didn't", "don't", "doesn't", "can't", "cannot", "wasn't", "weren't", "haven't", "hasn't", "won't", "wouldn't", "couldn't", "shouldn't"}
         
-        # Create bag of words (word -> count)
-        bag_of_words = {}
-        for word in words:
-            # Remove punctuation from word
-            word = ''.join(c for c in word if c.isalpha())
-            if word:  # Skip empty strings
-                bag_of_words[word] = bag_of_words.get(word, 0) + 1
+        # Track intensifiers
+        intensifiers = {"really", "very", "extremely", "so", "totally", "absolutely", "completely"}
         
-        net_word_sentiment = 0
-        for word, count in bag_of_words.items():
-            net_word_sentiment += count * self.calc_word_sentiment(word)
+        net_sentiment = 0
+        negation = False
+        intensifier = 1
         
-        return (net_word_sentiment > 0) - (net_word_sentiment < 0)
+        for i, word in enumerate(words):
+            # Clean the word of punctuation
+            
+            clean_word = stemmer.stem(word)
+            #edge case with enjoy for the stemmer
+            if clean_word == "enjoi":
+                clean_word = "enjoy"
+
+            if not clean_word:
+                continue
+                
+            # Check for negation
+            if clean_word in negation_words:
+                negation = not negation  # Toggle negation
+                continue
+                
+            # Check for intensifiers
+            if clean_word in intensifiers:
+                intensifier = 2
+                continue
+
+
+            
+            word_sentiment = self.calc_word_sentiment(clean_word)
+
+
+            #print(clean_word, word_sentiment, negation, intensifier)
+            
+            # Apply negation and intensifier
+            if word_sentiment != 0:
+                if negation:
+                    word_sentiment = -word_sentiment
+                
+                net_sentiment += word_sentiment * intensifier
+                intensifier = 1  # Reset intensifier after applying
+            
+            # Reset negation after 3 words if not used
+            # if negation and i > 0 and i % 3 == 0:
+            #     negation = False
+        
+        # Return final sentiment
+        if net_sentiment > 0:
+            return 1
+        elif net_sentiment < 0:
+            return -1
+        else:
+            return 0
 
     
     def calc_word_sentiment(self, word):
-       #returns 1 if positive, -1 if negative, 0 if neutral
-       with open('./data/sentiment.txt', 'r') as f:
-           sentiment_lines = f.readlines()
-       
-       # Process each line to create a dictionary of word sentiments
-       for line in sentiment_lines:
-           # Remove whitespace and split by comma
-           parts = line.strip().split(',')
-           if len(parts) == 2:
-               sentiment_word, sentiment_value = parts
-               # Check if this is the word we're looking for
-               if sentiment_word == word:
-                   # Return sentiment value based on pos/neg
-                   if sentiment_value == 'pos':
-                       return 1
-                   elif sentiment_value == 'neg':
-                       return -1
-                   else:
-                       return 0
-       
-       # If word not found in sentiment dictionary, return neutral sentiment
-       return 0
+        """Returns 1 if positive, -1 if negative, 0 if neutral"""
+        # Use a class attribute to store the sentiment dictionary
+        if not hasattr(self, 'sentiment_dict'):
+            self.sentiment_dict = {}
+            with open('./data/sentiment.txt', 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and ',' in line:  # Skip empty lines
+                        parts = line.split(',')
+                        if len(parts) == 2:
+                            sentiment_word, sentiment_value = parts
+                            # Store sentiment value in dictionary
+                            if sentiment_value == 'pos':
+                                self.sentiment_dict[sentiment_word] = 1
+                            elif sentiment_value == 'neg':
+                                self.sentiment_dict[sentiment_word] = -1
+        
+        # Look up the word in our dictionary
+        return self.sentiment_dict.get(word, 0)  # Return 0 if word not found
 
 
     ############################################################################
@@ -431,72 +486,34 @@ class Chatbot:
         return similarity
 
     def recommend(self, user_ratings, ratings_matrix, k=10, llm_enabled=False):
-        """Generate a list of indices of movies to recommend using collaborative
-         filtering.
-
-        You should return a collection of `k` indices of movies recommendations.
-
-        As a precondition, user_ratings and ratings_matrix are both binarized.
-
-        Remember to exclude movies the user has already rated!
-
-        Please do not use self.ratings directly in this method.
-
-        :param user_ratings: a binarized 1D numpy array of the user's movie
-            ratings
-        :param ratings_matrix: a binarized 2D numpy matrix of all ratings, where
-          `ratings_matrix[i, j]` is the rating for movie i by user j
-        :param k: the number of recommendations to generate
-        :param llm_enabled: whether the chatbot is in llm programming mode
-
-        :returns: a list of k movie indices corresponding to movies in
-        ratings_matrix, in descending order of recommendation.
-        """
-
-        ########################################################################
-        # TODO: Implement a recommendation function that takes a vector        #
-        # user_ratings and matrix ratings_matrix and outputs a list of movies  #
-        # recommended by the chatbot.                                          #
-        #                                                                      #
-        # WARNING: Do not use the self.ratings matrix directly in this         #
-        # function.                                                            #
-        #                                                                      #
-        # For GUS mode, you should use item-item collaborative filtering with  #
-        # cosine similarity, no mean-centering, and no normalization of        #
-        # scores.                                                              #
-        ########################################################################
-
-        # Populate this list with k movie indices to recommend to the user.
-
-        recommendations = []
-        #create a nxn matrix of similarity scores of movies with ach other
-        temp_matrix = np.zeros((ratings_matrix.shape[0], ratings_matrix.shape[0]))
-
-        for i in range(ratings_matrix.shape[0]):
-            for j in range(ratings_matrix.shape[0]):
-                temp_matrix[i][j] = self.similarity(ratings_matrix[i], ratings_matrix[j])
-
-        #binarize user ratinfs
-        bin_user_ratings = self.binarize(user_ratings)
-
-        movie_idx_to_ratr = {}
-
+        """Generate a list of indices of movies to recommend using collaborative filtering."""
         
+        # Dictionary to store predicted ratings for unwatched movies
+        movie_idx_to_rating = {}
+        
+        # For each movie the user hasn't rated
         for j in range(ratings_matrix.shape[0]):
-            aggr = 0
-            for i in range(len(bin_user_ratings)):
-                if bin_user_ratings[i] != 0:
-                    sim_score = temp_matrix[j][i]
-                    aggr += sim_score * bin_user_ratings[i]
-            movie_idx_to_ratr[j] = aggr
+            if user_ratings[j] != 0:  # Skip movies the user has already rated
+                continue
+            
+            # Calculate predicted rating for movie j
+            numerator = 0
+            denominator = 0
+            
+            # Compare with all movies the user has rated
+            for i in range(ratings_matrix.shape[0]):
+                if user_ratings[i] != 0:  # Only consider movies the user has rated
+                    # Calculate similarity between movie i and movie j
+                    sim_score = self.similarity(ratings_matrix[i], ratings_matrix[j])
+                    numerator += sim_score * user_ratings[i]
+                    denominator += abs(sim_score)
+            
+            # Store predicted rating if we have valid data
+            if denominator > 0:
+                movie_idx_to_rating[j] = numerator
         
-        #return top k keys with highest values
-        recommendations = sorted(movie_idx_to_ratr, key=movie_idx_to_ratr.get, reverse=True)[:k]
-                
-
-        ########################################################################
-        #                        END OF YOUR CODE                              #
-        ########################################################################
+        # Return top k movies with highest predicted ratings
+        recommendations = sorted(movie_idx_to_rating, key=movie_idx_to_rating.get, reverse=True)[:k]
         return recommendations
 
     ############################################################################
